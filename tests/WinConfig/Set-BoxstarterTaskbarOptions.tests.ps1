@@ -111,6 +111,51 @@ Describe "Set-BoxstarterTaskbarOptions" {
         }
     }
 
+    Context "When docking the taskbar" {
+        $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+        $settingKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3'
+
+        # both use the ABE_* edge values: 0 = left, 1 = top, 2 = right, 3 = bottom
+        $testCases = @(
+            @{ Dock = 'Left'; Edge = 0 }
+            @{ Dock = 'Top'; Edge = 1 }
+            @{ Dock = 'Right'; Edge = 2 }
+            @{ Dock = 'Bottom'; Edge = 3 }
+        )
+
+        It 'should set TaskbarLocation and the StuckRects3 position to <Edge> for -Dock <Dock>' -TestCases $testCases {
+            param ($Dock, $Edge)
+
+            $script:startSettings = New-Object byte[] 48
+            $script:startSettings[12] = 0x03
+            $script:writtenSettings = @()
+
+            Mock Test-Path { $false }
+            Mock Test-Path { $true } -ParameterFilter { $Path -eq $key -or $Path -eq $settingKey }
+            Mock Get-ItemProperty { [pscustomobject]@{ Settings = $script:startSettings } }
+            Mock Set-ItemProperty
+            Mock Set-ItemProperty { $script:writtenSettings += , $Value } -ParameterFilter { $Path -eq $settingKey }
+            Mock Restart-Explorer
+
+            Set-BoxstarterTaskbarOptions -Dock $Dock
+
+            Assert-MockCalled Set-ItemProperty -ParameterFilter { $Path -eq $key -and $Name -eq 'TaskbarLocation' -and $Value -eq $Edge -and $Type -eq 'DWord' } -Exactly 1 -Scope It
+            $script:writtenSettings.Count | Should Be 1
+            $script:writtenSettings[0][12] | Should Be $Edge
+        }
+
+        It 'should not set TaskbarLocation without -Dock' {
+            Mock Test-Path { $true }
+            Mock Get-ItemProperty { [pscustomobject]@{ Settings = (New-Object byte[] 48) } }
+            Mock Set-ItemProperty
+            Mock Restart-Explorer
+
+            Set-BoxstarterTaskbarOptions -Lock
+
+            Assert-MockCalled Set-ItemProperty -ParameterFilter { $Name -eq 'TaskbarLocation' } -Exactly 0 -Scope It
+        }
+    }
+
     Context "When passing values without parameter names" {
 
         It "should not accept them" {

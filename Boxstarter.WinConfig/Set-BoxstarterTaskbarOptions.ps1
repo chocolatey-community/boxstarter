@@ -20,6 +20,7 @@ Changes the size of the taskbar icons.  Valid inputs are Small and Large.
 
 .PARAMETER Dock
 Changes the location in which the taskbar is docked. Valid inputs are Top, Left, Bottom and Right.
+On Windows 11, docking to a location other than Bottom requires a Windows version that offers the taskbar position setting.
 
 .PARAMETER Combine
 Changes the taskbar icon combination style. Valid inputs are Always, Full, and Never.
@@ -173,6 +174,26 @@ multi-monitor support and always combine icons on non-primary monitors.
 
             "Never" {
                 Set-ItemProperty -Path $key -Name TaskbarGlomLevel -Value 2
+            }
+        }
+
+        # Windows 11 reads the taskbar position from TaskbarLocation and overwrites the StuckRects
+        # position from it when Explorer starts; older Windows versions ignore it and use StuckRects
+        switch ($Dock) {
+            "Top" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 1 -Type DWord
+            }
+
+            "Left" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 0 -Type DWord
+            }
+
+            "Bottom" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 3 -Type DWord
+            }
+
+            "Right" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 2 -Type DWord
             }
         }
 
