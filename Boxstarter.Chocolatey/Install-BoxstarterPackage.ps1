@@ -102,6 +102,11 @@ as the local Boxstarter install.
 This will stop execution immediately after a Chocolatey package fails to
 install.
 
+.PARAMETER RebootTimeout
+Only applies to remote installations. The maximum number of seconds
+Boxstarter waits for a remote computer to finish rebooting and accept
+PowerShell remoting again. Defaults to 1800 seconds (half an hour).
+
 .NOTES
 If specifying only one package, Boxstarter calls Chocolatey with the
 -force argument and deletes the previously installed package directory.
@@ -310,7 +315,14 @@ about_boxstarter_chocolatey
 
         [switch]$DelegateChocoSources,
 
-        [switch]$StopOnPackageFailure
+        [switch]$StopOnPackageFailure,
+
+        [parameter(ParameterSetName="ComputerName")]
+        [parameter(ParameterSetName="ConnectionUri")]
+        [parameter(ParameterSetName="Session")]
+        [parameter(ParameterSetName="BoxstarterConnectionConfig")]
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$RebootTimeout = 1800
     )
     $CurrentVerbosity=$global:VerbosePreference
     try {
@@ -344,7 +356,7 @@ about_boxstarter_chocolatey
         #If $sessions are being provided we assume remoting is setup on both ends
         #and don't need to test, configure and tear down
         if($Session -ne $null){
-            Process-Sessions $Session $sessionArgs $delegateSources
+            Process-Sessions $Session $sessionArgs $delegateSources $RebootTimeout
             return
         }
 
@@ -372,7 +384,7 @@ about_boxstarter_chocolatey
                 $ConnectionUri | %{
                     $sessionArgs.ConnectionURI = $_
                     Write-BoxstarterMessage "Installing $packageName on $($_.ToString())"
-                    Install-BoxstarterPackageOnComputer $_.Host $sessionArgs $PackageName $DisableReboots $CredSSPStatus $delegateSources
+                    Install-BoxstarterPackageOnComputer $_.Host $sessionArgs $PackageName $DisableReboots $CredSSPStatus $delegateSources $RebootTimeout
                 }
             }
             elseif($BoxstarterConnectionConfig) {
@@ -384,13 +396,13 @@ about_boxstarter_chocolatey
                     if($_.PSSessionOption){
                         $sessionArgs.SessionOption = $_.PSSessionOption
                     }
-                    Install-BoxstarterPackageOnComputer $_.ConnectionURI.Host $sessionArgs $PackageName $DisableReboots $CredSSPStatus $delegateSources
+                    Install-BoxstarterPackageOnComputer $_.ConnectionURI.Host $sessionArgs $PackageName $DisableReboots $CredSSPStatus $delegateSources $RebootTimeout
                 }
             }
             else {
                 $ComputerName | %{
                     $sessionArgs.ComputerName = $_
-                    Install-BoxstarterPackageOnComputer $_ $sessionArgs $PackageName $DisableReboots $CredSSPStatus $delegateSources
+                    Install-BoxstarterPackageOnComputer $_ $sessionArgs $PackageName $DisableReboots $CredSSPStatus $delegateSources $RebootTimeout
                 }
             }
         }
@@ -420,13 +432,13 @@ function Get-ComputerNames([URI[]]$ConnectionUris) {
     return $computerNames
 }
 
-function Process-Sessions($sessions, $sessionArgs, $delegateSources){
+function Process-Sessions($sessions, $sessionArgs, $delegateSources, $RebootTimeout){
     $Sessions | %{
         Write-BoxstarterMessage "Processing Session..." -Verbose
         Set-SessionArgs $_ $sessionArgs
         $record = Start-Record $_.ComputerName
         try {
-            if(-not (Install-BoxstarterPackageForSession $_ $PackageName $DisableReboots $sessionArgs $delegateSources)){
+            if(-not (Install-BoxstarterPackageForSession $_ $PackageName $DisableReboots $sessionArgs $delegateSources -RebootTimeout $RebootTimeout)){
                 $record.Completed=$false
             }
         }
@@ -467,7 +479,7 @@ function Finish-Record($obj) {
     Write-BoxstarterMessage "object written..." -Verbose
 }
 
-function Install-BoxstarterPackageOnComputer ($ComputerName, $sessionArgs, $PackageName, $DisableReboots, $CredSSPStatus, $delegateSources){
+function Install-BoxstarterPackageOnComputer ($ComputerName, $sessionArgs, $PackageName, $DisableReboots, $CredSSPStatus, $delegateSources, $RebootTimeout){
     $record = Start-Record $ComputerName
     try {
         if(!(Enable-RemotingOnRemote $sessionArgs $ComputerName)){
@@ -483,7 +495,7 @@ function Install-BoxstarterPackageOnComputer ($ComputerName, $sessionArgs, $Pack
         Write-BoxstarterMessage "Creating a new session with $computerName..." -Verbose
         $session = New-PSSession @sessionArgs -Name Boxstarter
 
-        if(-not (Install-BoxstarterPackageForSession $session $PackageName $DisableReboots $sessionArgs $enableCredSSP $delegateSources)){
+        if(-not (Install-BoxstarterPackageForSession $session $PackageName $DisableReboots $sessionArgs $enableCredSSP $delegateSources $RebootTimeout)){
             $record.Completed=$false
         }
     }
@@ -496,7 +508,7 @@ function Install-BoxstarterPackageOnComputer ($ComputerName, $sessionArgs, $Pack
     }
 }
 
-function Install-BoxstarterPackageForSession($session, $PackageName, $DisableReboots, $sessionArgs, $enableCredSSP, $delegateSources) {
+function Install-BoxstarterPackageForSession($session, $PackageName, $DisableReboots, $sessionArgs, $enableCredSSP, $delegateSources, $RebootTimeout) {
     try{
         if($session.Availability -ne "Available"){
             Write-Error (New-Object -TypeName ArgumentException -ArgumentList "The Session is not Available")
@@ -524,7 +536,7 @@ function Install-BoxstarterPackageForSession($session, $PackageName, $DisableReb
             }
         }
 
-        Invoke-Remotely ([ref]$session) $PackageName $DisableReboots $sessionArgs
+        Invoke-Remotely ([ref]$session) $PackageName $DisableReboots $sessionArgs $RebootTimeout
         return $true
     }
     finally {
@@ -811,13 +823,40 @@ function Test-RebootingOrDisconnected($RemoteResult) {
     }
 }
 
-function Wait-ForSessionToClose($session) {
+function Wait-ForSessionToClose($session, $timeoutSeconds = 120) {
     Write-BoxstarterMessage "Waiting for $($session.ComputerName) to sever remote session..."
     $timeout=0
-    while($session.State -eq "Opened" -and $timeout -lt 120){
+    while($session.State -eq "Opened" -and $timeout -lt $timeoutSeconds){
         $timeout += 2
         start-sleep -seconds 2
     }
+    if($session.State -eq "Opened") {
+        Write-BoxstarterMessage "$($session.ComputerName) did not sever the remote session within $timeoutSeconds seconds. The restart may be delayed. Waiting for it to complete..." -Color Yellow
+    }
+}
+
+function Get-RemoteBootTime($Session) {
+    try {
+        return Invoke-Command -Session $Session {
+            $os = Get-WmiObject Win32_OperatingSystem
+            [Management.ManagementDateTimeConverter]::ToDateTime($os.LastBootUpTime).ToUniversalTime()
+        } -ErrorAction Stop
+    }
+    catch {
+        Write-BoxstarterMessage "Failed to read boot time : $($global:Error[0])" -Verbose
+        $global:Error.RemoveAt(0)
+    }
+}
+
+function Test-RemoteRebooted($Session, $BootTimeBefore) {
+    if ($BootTimeBefore -eq $null) {
+        Write-BoxstarterMessage "Boot time before install is unknown. Relying on pending reboot checks only." -Verbose
+        return $true
+    }
+    $bootTimeNow = Get-RemoteBootTime $Session
+    Write-BoxstarterMessage "Boot time before install: $BootTimeBefore, boot time now: $bootTimeNow" -Verbose
+    # LastBootUpTime can drift by a few seconds (i.e. ntp-sync) - add grace period
+    return ($bootTimeNow -ne $null -and ($bootTimeNow - $BootTimeBefore).TotalSeconds -gt 10)
 }
 
 function Test-ShutDownInProgress($Session) {
@@ -910,17 +949,20 @@ function Test-Reconnection($Session, $sessionPID) {
     return $reconnected
 }
 
-function Invoke-Remotely([ref]$session,$Package,$DisableReboots,$sessionArgs){
+function Invoke-Remotely([ref]$session, $Package, $DisableReboots, $sessionArgs, $RebootTimeout=1800){
     Write-BoxstarterMessage "Invoking remote install" -verbose
     while($session.value.Availability -eq "Available") {
         $sessionPID = try { Invoke-Command -Session $session.value { return $PID } } catch { $global:Error.RemoveAt(0) }
         Write-BoxstarterMessage "Session's process ID is $sessionPID" -verbose
         if($sessionPID -ne $null) {
+            $bootTimeBefore = Get-RemoteBootTime $session.value
             $remoteResult = Invoke-RemoteBoxstarter $Package $sessionArgs.Credential $DisableReboots $session.value
         }
 
         if(Test-RebootingOrDisconnected $remoteResult) {
-            Wait-ForSessionToClose $session.value
+            $computerName = $session.value.ComputerName
+            $deadline = (Get-Date).AddSeconds($RebootTimeout)
+            Wait-ForSessionToClose $session.value ([math]::Min(120, $RebootTimeout))
 
             $reconnected=$false
             Write-BoxstarterMessage "Waiting for $($session.value.ComputerName) to respond to remoting..."
@@ -940,12 +982,22 @@ function Invoke-Remotely([ref]$session,$Package,$DisableReboots,$sessionArgs){
                     $global:Error.RemoveAt(0)
                 }
                 elseif($session.value -ne $null -and $Session.value.Availability -eq "Available"){
-                    Write-BoxstarterMessage "testing new session..." -verbose
-                    if($remoteResult.Result -eq "Rebooting"){$sessionPID=-1}
-                    $reconnected = Test-Reconnection $session.value $sessionPID
+                    if($remoteResult.Result -eq "Rebooting" -and !(Test-RemoteRebooted $session.value $bootTimeBefore)) {
+                        Write-BoxstarterMessage "$computerName accepts remoting but has not restarted yet..." -verbose
+                    }
+                    else {
+                        Write-BoxstarterMessage "testing new session..." -verbose
+                        if($remoteResult.Result -eq "Rebooting"){$sessionPID=-1}
+                        $reconnected = Test-Reconnection $session.value $sessionPID
+                    }
                 }
                 else {
                     Write-BoxstarterMessage "new session is not available..." -verbose
+                }
+
+                if(!$reconnected -and (Get-Date) -gt $deadline) {
+                    $message = "Timed out after $RebootTimeout seconds waiting for $computerName to restart. Use 'RebootTimeout' parameter to wait longer."
+                    throw New-Object -TypeName TimeoutException $message
                 }
             }
             Until($reconnected -eq $true)
