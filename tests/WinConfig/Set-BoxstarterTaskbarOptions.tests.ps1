@@ -79,6 +79,38 @@ Describe "Set-BoxstarterTaskbarOptions" {
         }
     }
 
+    Context "When changing auto-hide" {
+        $settingKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3'
+
+        # byte 8 holds the AppBar state flags: 0x01 = ABS_AUTOHIDE, 0x02 = ABS_ALWAYSONTOP
+        $testCases = @(
+            @{ Switch = 'AutoHide'; Start = 0x02; Expected = 0x03 }
+            @{ Switch = 'AutoHide'; Start = 0x03; Expected = 0x03 }
+            @{ Switch = 'NoAutoHide'; Start = 0x03; Expected = 0x02 }
+            @{ Switch = 'NoAutoHide'; Start = 0x02; Expected = 0x02 }
+        )
+
+        It 'should turn byte 8 from <Start> into <Expected> for -<Switch>' -TestCases $testCases {
+            param ($Switch, $Start, $Expected)
+
+            $script:startSettings = New-Object byte[] 48
+            $script:startSettings[8] = $Start
+            $script:writtenSettings = @()
+
+            Mock Test-Path { $false }
+            Mock Test-Path { $true } -ParameterFilter { $Path -eq $settingKey }
+            Mock Get-ItemProperty { [pscustomobject]@{ Settings = $script:startSettings } }
+            Mock Set-ItemProperty { $script:writtenSettings += , $Value } -ParameterFilter { $Path -eq $settingKey }
+            Mock Restart-Explorer
+
+            $params = @{ $Switch = $true }
+            Set-BoxstarterTaskbarOptions @params
+
+            $script:writtenSettings.Count | Should Be 1
+            $script:writtenSettings[0][8] | Should Be $Expected
+        }
+    }
+
     Context "When passing values without parameter names" {
 
         It "should not accept them" {

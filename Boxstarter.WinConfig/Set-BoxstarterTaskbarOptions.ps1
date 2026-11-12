@@ -239,8 +239,7 @@ multi-monitor support and always combine icons on non-primary monitors.
         }
 
         if ($NoAutoHide) {
-            $settings[8] = $settings[8] -band 0
-            Set-ItemProperty -Path $settingKey -Name Settings -Value $settings
+            $settings[8] = $settings[8] -band 0xFE
         }
 
         Set-ItemProperty -Path $settingKey -Name Settings -Value $settings
