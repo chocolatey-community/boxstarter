@@ -666,8 +666,6 @@ function Import-FromEnvironment ($varToImport, $scope) {
 
     $newVar = $varToImport.Substring('BEX.'.Length)
     Invoke-Expression "`$$($scope):$newVar=$(ConvertTo-PSString $ival)"
-
-    remove-item "Env:\$varToImport"
 }
 
 function Import-BoxstarterVars {

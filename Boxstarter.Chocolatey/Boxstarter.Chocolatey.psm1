@@ -15,6 +15,10 @@ Import-Module $unNormalized.FullName -Global -DisableNameChecking
 
 if ($ExportCommands) {
     Import-BoxstarterVars
-    Export-ModuleMember cinst, cup, choco
+    # Define the wrappers as global functions (still bound to this module) instead of calling
+    # Export-ModuleMember, which would replace the manifest's export list and export nothing.
+    foreach ($name in 'cinst', 'cup', 'choco') {
+        Set-Item -Path "function:global:$name" -Value (Get-Item "function:$name").ScriptBlock
+    }
 }
 
