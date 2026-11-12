@@ -20,6 +20,7 @@ Changes the size of the taskbar icons.  Valid inputs are Small and Large.
 
 .PARAMETER Dock
 Changes the location in which the taskbar is docked. Valid inputs are Top, Left, Bottom and Right.
+On Windows 11, docking to a location other than Bottom requires a Windows version that offers the taskbar position setting.
 
 .PARAMETER Combine
 Changes the taskbar icon combination style. Valid inputs are Always, Full, and Never.
@@ -31,16 +32,24 @@ Turn on always show all icons in the notification area.
 Turn off always show all icons in the notification area.
 
 .PARAMETER MultiMonitorOn
-Turn on Show tasbkar on all displays.
+Turn on Show taskbar on all displays.
 
 .PARAMETER MultiMonitorOff
 Turn off Show taskbar on all displays.
 
 .PARAMETER MultiMonitorMode
 Changes the behavior of the taskbar when using multiple displays. Valid inputs are All, MainAndOpen, and Open.
+Only applied when MultiMonitorOn is also set.
 
 .PARAMETER MultiMonitorCombine
 Changes the taskbar icon combination style for non-primary displays. Valid inputs are Always, Full, and Never.
+Only applied when MultiMonitorOn is also set.
+
+.PARAMETER EnableSearchBox
+Shows the search box on the taskbar.
+
+.PARAMETER DisableSearchBox
+Hides the search box on the taskbar.
 
 .PARAMETER NewsIcons
 Changes how the 'News and Interests' icons are displayed. Valid inputs are IconsText, Icons, and Never.
@@ -56,34 +65,23 @@ Set-BoxstarterTaskbarOptions -Unlock -AlwaysShowIconsOn -Size Large -MultiMonito
 Unlocks the taskbar and always shows large notification icons. Sets
 multi-monitor support and always combine icons on non-primary monitors.
 #>
-    [CmdletBinding(DefaultParameterSetName='unlock')]
+    [CmdletBinding(PositionalBinding=$false)]
     param(
-        [Parameter(ParameterSetName='lockhide')]
-        [Parameter(ParameterSetName='locknohide')]
         [switch]
         $Lock,
 
-        [Parameter(ParameterSetName='unlock')]
-        [Parameter(ParameterSetName='unlockhide')]
-        [Parameter(ParameterSetName='unlocknohide')]
         [switch]
         $UnLock,
 
-        [Parameter(ParameterSetName='lockhide')]
-        [Parameter(ParameterSetName='unlockhide')]
         [switch]
         $AutoHide,
 
-        [Parameter(ParameterSetName='locknohide')]
-        [Parameter(ParameterSetName='unlocknohide')]
         [switch]
         $NoAutoHide,
 
-        [Parameter(ParameterSetName='AlwaysShowIconsOn')]
         [switch]
         $AlwaysShowIconsOn,
 
-        [Parameter(ParameterSetName='AlwaysShowIconsOff')]
         [switch]
         $AlwaysShowIconsOff,
 
@@ -99,29 +97,23 @@ multi-monitor support and always combine icons on non-primary monitors.
         [String]
         $Combine,
 
-        [Parameter(ParameterSetName='MultiMonitorOff')]
         [switch]
         $MultiMonitorOff,
 
-        [Parameter(ParameterSetName='MultiMonitorOn')]
         [switch]
         $MultiMonitorOn,
 
-        [Parameter(ParameterSetName='MultiMonitorOn')]
         [ValidateSet('All', 'MainAndOpen', 'Open')]
         [String]
         $MultiMonitorMode,
 
-        [Parameter(ParameterSetName='MultiMonitorOn')]
         [ValidateSet('Always','Full','Never')]
         [String]
         $MultiMonitorCombine,
 
-        [Parameter(ParameterSetName = 'DisableSearchBox')]
         [switch]
         $DisableSearchBox,
 
-        [Parameter(ParameterSetName = 'EnableSearchBox')]
         [switch]
         $EnableSearchBox,
 
@@ -129,6 +121,19 @@ multi-monitor support and always combine icons on non-primary monitors.
         [String]
         $NewsIcons
     )
+
+    $mutuallyExclusive = @(
+        @('Lock', 'UnLock'),
+        @('AutoHide', 'NoAutoHide'),
+        @('AlwaysShowIconsOn', 'AlwaysShowIconsOff'),
+        @('MultiMonitorOn', 'MultiMonitorOff'),
+        @('EnableSearchBox', 'DisableSearchBox')
+    )
+    foreach ($pair in $mutuallyExclusive) {
+        if ($PSBoundParameters[$pair[0]] -and $PSBoundParameters[$pair[1]]) {
+            throw New-Object -TypeName ArgumentException "You may not set both $($pair[0]) and $($pair[1]). You can only set one."
+        }
+    }
 
     $baseKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion'
     $explorerKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer'
@@ -169,6 +174,26 @@ multi-monitor support and always combine icons on non-primary monitors.
 
             "Never" {
                 Set-ItemProperty -Path $key -Name TaskbarGlomLevel -Value 2
+            }
+        }
+
+        # Windows 11 reads the taskbar position from TaskbarLocation and overwrites the StuckRects
+        # position from it when Explorer starts; older Windows versions ignore it and use StuckRects
+        switch ($Dock) {
+            "Top" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 1 -Type DWord
+            }
+
+            "Left" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 0 -Type DWord
+            }
+
+            "Bottom" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 3 -Type DWord
+            }
+
+            "Right" {
+                Set-ItemProperty -Path $key -Name TaskbarLocation -Value 2 -Type DWord
             }
         }
 
@@ -235,8 +260,7 @@ multi-monitor support and always combine icons on non-primary monitors.
         }
 
         if ($NoAutoHide) {
-            $settings[8] = $settings[8] -band 0
-            Set-ItemProperty -Path $settingKey -Name Settings -Value $settings
+            $settings[8] = $settings[8] -band 0xFE
         }
 
         Set-ItemProperty -Path $settingKey -Name Settings -Value $settings
